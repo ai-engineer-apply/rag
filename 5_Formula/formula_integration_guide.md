@@ -175,3 +175,107 @@ python3 chat_app.py
 ```
 
 This setup allows your AI chat queries to first retrieve relevant information from your local markdown documents, and then use that information to provide more accurate and context-aware responses.
+
+## Step 2.7: Worked example — how this repository indexed and searched
+
+The steps below document a concrete run I performed on this repository so you can reproduce the process exactly. It includes the environment creation, dependency installation, indexing, sample searches, and small repository housekeeping I performed.
+
+1. Create and activate a virtual environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+2. Upgrade packaging tools and install the repository dependencies
+
+```bash
+pip install --upgrade pip setuptools wheel
+pip install -r 6_Symbols/requirements.txt
+```
+
+Notes: installing `sentence-transformers`, `torch`, and `faiss-cpu` will download model files and native wheels. The SentenceTransformers model used by the scripts is `all-MiniLM-L6-v2` and will be cached by Hugging Face.
+
+3. Create the FAISS index from markdown files (indexing)
+
+```bash
+# From repo root; pass the folder to scan (I scanned the repo root to include all .md files)
+python3 6_Symbols/index.py --folder .
+```
+
+What this did:
+- Scanned the passed folder recursively for `.md` files.
+- Extracted inline text from Markdown using `markdown-it-py`.
+- Created embeddings for each document using `SentenceTransformer('all-MiniLM-L6-v2')`.
+- Built a FAISS `IndexFlatL2` (wrapped with `IndexIDMap`) and stored it to `faiss_index.bin`.
+- Wrote `filepaths.txt` mapping index ids to file paths.
+
+Files produced:
+- `faiss_index.bin` — binary FAISS index (generated)
+- `filepaths.txt` — newline list mapping index ids → document paths
+
+4. Run sample semantic searches
+
+```bash
+# Example queries I ran
+python3 6_Symbols/search.py --query "retrieval augmented generation"
+python3 6_Symbols/search.py --query "people"
+python3 6_Symbols/search.py --query "who is"
+```
+
+Each search loads `faiss_index.bin`, `filepaths.txt`, and the `SentenceTransformer` model, encodes the query, and returns the top-k matching document paths and distances.
+
+Sample person-related results found during the runs (top unique matches):
+- `6_Symbols/docs/jane.md`
+- `6_Symbols/docs/john.md`
+- `6_Symbols/docs/mehmet.md`
+- `2_Real/README.md`
+- `4_UI/README.md`
+- `7_Semblance/README.md`
+
+5. Re-index after adding documents
+
+If you add or update markdown files, re-run the indexer to refresh `faiss_index.bin` and `filepaths.txt`:
+
+```bash
+python3 6_Symbols/index.py --folder .
+```
+
+6. Repository housekeeping I performed (optional but recommended)
+
+- Added common environment and generated file patterns to `.gitignore` so large or environment-specific files are not committed. Notable entries added:
+
+```gitignore
+.venv
+.venv/
+venv/
+faiss_index.bin
+filepaths.txt
+__pycache__/
+*.py[cod]
+```
+
+- If the virtual environment directory was already committed, remove it from the index and commit the change:
+
+```bash
+git rm -r --cached .venv
+git commit -m "Remove .venv from repo and update .gitignore"
+git push
+```
+
+7. Programmatic integration (quick recap)
+
+- To reuse the search behavior inside another service (for RAG), load the FAISS index and model once and expose a `semantic_search(query, k)` function that:
+    - encodes the query with the SentenceTransformer,
+    - runs `index.search(query_embedding, k)`,
+    - maps returned IDs to file paths using `filepaths.txt`, and
+    - returns (path, distance) pairs.  (See the conceptual `search_module.py` example earlier in this guide.)
+
+8. Next steps you can take
+
+- Create a small `chat_app.py` that calls the `semantic_search` function, retrieves the document contents for the top results, and uses them as context for your LLM prompt.
+- Add snippet extraction to the search results so each hit returns a short excerpt for quick preview.
+- Persist embeddings and metadata in a more featureful store (e.g., Qdrant or Milvus) if you need advanced filtering or larger scale.
+
+If you'd like, I can add a short `6_Symbols/README.md` with the exact commands, or modify `6_Symbols/search.py` to return snippets alongside file paths and distances. Tell me which and I'll implement it.
+
